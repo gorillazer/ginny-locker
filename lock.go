@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/google/wire"
+	"github.com/goriller/ginny-util/retry"
 )
 
 // LockerProvider
@@ -35,8 +36,8 @@ func NewLocker(resource, token string,
 	}
 }
 
-// TryLock
-func TryLock(ctx context.Context, client redis.UniversalClient, resource string, token string, timeout int) (lock *Locker, ok bool, err error) {
+// Lock
+func Lock(ctx context.Context, client redis.UniversalClient, resource string, token string, timeout int) (lock *Locker, ok bool, err error) {
 	lock = &Locker{resource, token, client, timeout}
 	ok, err = lock.tryLock(ctx)
 
@@ -49,7 +50,15 @@ func TryLock(ctx context.Context, client redis.UniversalClient, resource string,
 
 // tryLock
 func (lock *Locker) tryLock(ctx context.Context) (ok bool, err error) {
-	err = lock.client.Do(ctx, "SET", lock.key(), lock.token, "EX", int(lock.timeout), "NX").Err()
+	_, err = retry.RetryCallFunc(ctx, func(ctx context.Context, param interface{}) (interface{}, error) {
+		p := param.(*Locker)
+		err := lock.client.Do(ctx, "SET", p.key(), p.token, "EX", int(lock.timeout), "NX").Err()
+		if err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}, lock, 3)
+	// err = lock.client.Do(ctx, "SET", lock.key(), lock.token, "EX", int(lock.timeout), "NX").Err()
 	if err != nil {
 		return false, err
 	}
