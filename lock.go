@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	redsync "github.com/go-redsync/redsync/v4"
 	goredis "github.com/go-redsync/redsync/v4/redis/goredis/v8"
 	"github.com/google/wire"
+	redis "github.com/goriller/ginny-redis"
 )
 
 // LockerProvider
@@ -23,18 +23,15 @@ type ILocker interface {
 
 // Locker
 type Locker struct {
-	client  redis.UniversalClient
 	redsync *redsync.Redsync
 }
 
 // NewLocker
-func NewLocker(resource, token string,
-	client redis.UniversalClient, timeout int) *Locker {
-	pool := goredis.NewPool(client)
+func NewLocker(ctx context.Context, redis *redis.Redis) *Locker {
+	pool := goredis.NewPool(redis.Client())
 	rs := redsync.New(pool)
 
 	return &Locker{
-		client:  client,
 		redsync: rs,
 	}
 }
