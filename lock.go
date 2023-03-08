@@ -3,10 +3,12 @@ package locker
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/go-redis/redis/v8"
+	redsync "github.com/go-redsync/redsync/v4"
+	goredis "github.com/go-redsync/redsync/v4/redis/goredis/v8"
 	"github.com/google/wire"
-	"github.com/goriller/ginny-util/retry"
 )
 
 // LockerProvider
@@ -14,79 +16,58 @@ var LockerProvider = wire.NewSet(NewLocker, wire.Bind(new(ILocker), new(*Locker)
 
 // ILocker
 type ILocker interface {
-	tryLock(ctx context.Context) (ok bool, err error)
+	Lock(ctx context.Context, resource string, timeout int) (*redsync.Mutex, error)
+	TryLock(ctx context.Context, resource string, expire time.Duration, tries int) (*redsync.Mutex, error)
+	Unlock(ctx context.Context, mutex *redsync.Mutex) (bool, error)
 }
 
 // Locker
 type Locker struct {
-	resource string
-	token    string
-	client   redis.UniversalClient
-	timeout  int
+	client  redis.UniversalClient
+	redsync *redsync.Redsync
 }
 
 // NewLocker
 func NewLocker(resource, token string,
 	client redis.UniversalClient, timeout int) *Locker {
+	pool := goredis.NewPool(client)
+	rs := redsync.New(pool)
+
 	return &Locker{
-		resource: resource,
-		token:    token,
-		client:   client,
-		timeout:  timeout,
+		client:  client,
+		redsync: rs,
 	}
 }
 
 // Lock
-func Lock(ctx context.Context, client redis.UniversalClient, resource string, token string, timeout int) (lock *Locker, ok bool, err error) {
-	lock = &Locker{resource, token, client, timeout}
-	ok, err = lock.tryLock(ctx)
-
-	if !ok || err != nil {
-		lock = nil
+func (lock *Locker) Lock(ctx context.Context, resource string) (*redsync.Mutex, error) {
+	if resource == "" {
+		return nil, fmt.Errorf("resource undefined")
 	}
 
-	return
+	mutex := lock.redsync.NewMutex(resource)
+	err := mutex.LockContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return mutex, nil
 }
 
-// tryLock
-func (lock *Locker) tryLock(ctx context.Context) (ok bool, err error) {
-	_, err = retry.RetryCallFunc(ctx, func(ctx context.Context, param interface{}) (interface{}, error) {
-		p := param.(*Locker)
-		err := lock.client.Do(ctx, "SET", p.key(), p.token, "EX", int(lock.timeout), "NX").Err()
-		if err != nil {
-			return nil, err
-		}
-		return nil, nil
-	}, lock, 3)
-	// err = lock.client.Do(ctx, "SET", lock.key(), lock.token, "EX", int(lock.timeout), "NX").Err()
-	if err != nil {
-		return false, err
+// TryLock
+func (lock *Locker) TryLock(ctx context.Context, resource string, expire time.Duration, tries int) (*redsync.Mutex, error) {
+	options := []redsync.Option{
+		redsync.WithExpiry(expire),
+		redsync.WithTries(tries),
 	}
-	return true, nil
+	mutex := lock.redsync.NewMutex(resource, options...)
+	err := mutex.LockContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return mutex, nil
 }
 
 // Unlock
-func (lock *Locker) Unlock(ctx context.Context) (err error) {
-	err = lock.client.Do(ctx, "del", lock.key()).Err()
-	return
-}
-
-// key
-func (lock *Locker) key() string {
-	return fmt.Sprintf("redislock:%s", lock.resource)
-}
-
-// AddTimeout
-func (lock *Locker) AddTimeout(ctx context.Context, exTime int64) (ok bool, err error) {
-	ttlTime, err := lock.client.Do(ctx, "TTL", lock.key()).Int64()
-	if err != nil {
-		return false, err
-	}
-	if ttlTime > 0 {
-		err := lock.client.Do(ctx, "SET", lock.key(), lock.token, "EX", int(ttlTime+exTime)).Err()
-		if err != nil {
-			return false, err
-		}
-	}
-	return true, nil
+func (lock *Locker) Unlock(ctx context.Context, mutex *redsync.Mutex) (bool, error) {
+	return mutex.UnlockContext(ctx)
 }
