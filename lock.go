@@ -17,7 +17,7 @@ var LockerProvider = wire.NewSet(NewLocker, wire.Bind(new(ILocker), new(*Locker)
 // ILocker
 type ILocker interface {
 	Lock(ctx context.Context, resource string) (*redsync.Mutex, error)
-	TryLock(ctx context.Context, resource string, expire time.Duration, tries int) (*redsync.Mutex, error)
+	TryLock(ctx context.Context, resource string, maxExpire, retryDelay time.Duration, tries int) (*redsync.Mutex, error)
 	Unlock(ctx context.Context, mutex *redsync.Mutex) (bool, error)
 }
 
