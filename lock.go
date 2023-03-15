@@ -51,10 +51,11 @@ func (lock *Locker) Lock(ctx context.Context, resource string) (*redsync.Mutex, 
 }
 
 // TryLock
-func (lock *Locker) TryLock(ctx context.Context, resource string, expire time.Duration, tries int) (*redsync.Mutex, error) {
+func (lock *Locker) TryLock(ctx context.Context, resource string, maxExpire, retryDelay time.Duration, tries int) (*redsync.Mutex, error) {
 	options := []redsync.Option{
-		redsync.WithExpiry(expire),
+		redsync.WithExpiry(maxExpire),
 		redsync.WithTries(tries),
+		redsync.WithRetryDelay(retryDelay),
 	}
 	mutex := lock.redsync.NewMutex(resource, options...)
 	err := mutex.LockContext(ctx)
